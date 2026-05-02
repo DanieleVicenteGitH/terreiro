@@ -75,6 +75,8 @@ tr.row-inativo td{opacity:.45;}
 .mes-box:hover{opacity:.75;}
 .mes-pago{background:var(--verde-bg);color:#5dc48a;}
 .mes-pendente{background:rgba(255,255,255,.05);color:rgba(255,255,255,.2);}
+.mes-vencido{background:rgba(179,58,42,.18);color:#e07060;border:1px solid rgba(224,112,96,.3);}
+.mes-futuro{background:rgba(255,255,255,.03);color:rgba(255,255,255,.1);}
 .mes-isento{background:var(--azul-bg);color:var(--azul);}
 .mes-icone{font-size:14px;margin-bottom:2px;}
 .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;}
@@ -167,7 +169,7 @@ hr.sep{border:none;border-top:1px solid var(--borda);margin:1.25rem 0;}
 // ═══════════════════════════════════════════
 //  CONFIGURAÇÃO
 // ═══════════════════════════════════════════
-const SCRIPT_URL = 'SUA_URL_DO_APPS_SCRIPT_AQUI';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwwpQloXetJjnmzcSN2zrSGNrn59VAeIf0sLeZc-KskyBrAoYlJeyPtR5dzBKSmEwhi/exec';
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const PERFIS = ['Filho(a) de Santo','Ogã','Ekedi','Visitante','Administrativo','Outro'];
 const STATUS_LISTA = ['Ativo','Afastado','Inativo'];
@@ -274,10 +276,34 @@ function sair() {
 // ═══════════════════════════════════════════
 //  NAVEGAÇÃO
 // ═══════════════════════════════════════════
-function iniciarApp() {
+async function iniciarApp() {
   document.getElementById('tela-login').style.display='none';
   document.getElementById('app').style.display='block';
   document.getElementById('topbar-nome').textContent = usuario.nome;
+
+  // Carrega dados do Google Sheets se SCRIPT_URL estiver configurada
+  if (SCRIPT_URL !== 'SUA_URL_DO_APPS_SCRIPT_AQUI') {
+    document.getElementById('app').innerHTML +=
+      '<div id="loading-app" style="position:fixed;inset:0;background:rgba(10,10,10,.85);z-index:300;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1rem">' +
+      '<div style="width:36px;height:36px;border:3px solid rgba(201,148,42,.3);border-top-color:var(--dourado);border-radius:50%;animation:spin .8s linear infinite"></div>' +
+      '<div style="font-family:Cinzel,serif;color:var(--dourado);font-size:13px;letter-spacing:1px">Carregando dados...</div></div>';
+    try {
+      const r = await fetch(SCRIPT_URL + '?acao=getTudo');
+      const d = await r.json();
+      if (d.membros     && d.membros.length)     MEMBROS     = d.membros;
+      if (d.lancamentos && d.lancamentos.length)  LANCAMENTOS = d.lancamentos.map((l,i) => ({...l, id: l.id || (proximoIdLanc + i)}));
+      if (d.lancamentos) proximoIdLanc = LANCAMENTOS.length + 100;
+      if (d.categorias  && d.categorias.length) {
+        CATEGORIAS = d.categorias;
+        salvarCategorias(); // sincroniza localStorage
+      }
+    } catch(e) {
+      console.warn('Não foi possível carregar do Google Sheets:', e.message);
+    }
+    const el = document.getElementById('loading-app');
+    if (el) el.remove();
+  }
+
   const abas = document.getElementById('menu-abas');
   abas.innerHTML='';
   const tabs = usuario.papel==='admin'
@@ -328,23 +354,81 @@ function aplicarStatusMeses(m) {
 }
 
 // FIX #3 — toggle de mês: 0→1→-1→0 (pendente→pago→isento→pendente)
+
+// ═══════════════════════════════════════════
+//  CLASSIFICAÇÃO DE MÊS — fonte única de verdade
+//  Retorna: { cls, ic, title }
+//  Regras:
+//   -1           → isento (afastado/inativo/manual)
+//    1           → pago
+//    0 + i < MES_ATUAL → vencido (pendente atrasado)
+//    0 + i === MES_ATUAL → pendente atual
+//    0 + i > MES_ATUAL  → futuro (ainda não venceu)
+// ═══════════════════════════════════════════
+function classificarMes(status_mes, indice) {
+  if (status_mes === 1)  return { cls:'mes-pago',     ic:'✓', title:'Pago' };
+  if (status_mes === -1) return { cls:'mes-isento',   ic:'—', title:'Isento' };
+  if (indice < MES_ATUAL)  return { cls:'mes-vencido',  ic:'!', title:'Pendente (vencido)' };
+  if (indice === MES_ATUAL) return { cls:'mes-pendente', ic:'·', title:'Pendente (mês atual)' };
+  return { cls:'mes-futuro', ic:'·', title:'Futuro' };
+}
+
+// Cor da célula <td> na tabela de membros (admin)
+function corCelulaMes(status_mes, indice) {
+  if (status_mes === 1)  return '#5dc48a';
+  if (status_mes === -1) return 'var(--azul)';
+  if (indice < MES_ATUAL)  return '#e07060';
+  return 'rgba(255,255,255,.15)';
+}
+
+// Ícone da célula <td> na tabela de membros (admin)
+function iconeCelulaMes(status_mes, indice) {
+  if (status_mes === 1)  return '✓';
+  if (status_mes === -1) return '—';
+  if (indice < MES_ATUAL)  return '!';
+  return '·';
+}
+
 function toggleMes(membroIdx, mesIdx) {
   const m = MEMBROS[membroIdx];
   const atual = m.meses[mesIdx];
-  m.meses[mesIdx] = atual===0 ? 1 : atual===1 ? -1 : 0;
-  // Re-renderiza o controle de meses sem recarregar a página
-  const grade = document.getElementById(`grade-meses-${membroIdx}`);
-  if (grade) grade.innerHTML = renderGradeMeses(membroIdx);
-  // Atualiza totais
-  recalcularTotais(membroIdx);
+  // Ciclo: 0 (pendente) → 1 (pago) → -1 (isento) → 0
+  m.meses[mesIdx] = atual === 0 ? 1 : atual === 1 ? -1 : 0;
+
+  // Atualiza a célula clicada diretamente (sem re-renderizar tudo)
+  const tdId = `td-mes-${membroIdx}-${mesIdx}`;
+  const td = document.getElementById(tdId);
+  if (td) {
+    const s   = m.meses[mesIdx];
+    const cor = corCelulaMes(s, mesIdx);
+    const ic  = iconeCelulaMes(s, mesIdx);
+    td.style.color      = cor;
+    td.style.fontWeight = (s===0 && mesIdx < MES_ATUAL) ? '600' : '400';
+    td.textContent      = ic;
+  }
+
+  // Sincroniza meses com Google Sheets
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'atualizarMeses',nome:m.nome,meses:m.meses})}).catch(()=>{});
+  }
+  // Atualiza o badge de status na linha
+  const stId = `td-status-${membroIdx}`;
+  const stEl = document.getElementById(stId);
+  if (stEl) {
+    const ult = m.meses.findLastIndex(x => x !== 0);
+    const sit = ult >= 0 && m.meses[ult] === 1 ? 'Em dia'
+              : ult >= 0 && m.meses[ult] === -1 ? 'Isento' : 'Pendente';
+    const bc  = sit==='Em dia' ? 'badge-pago' : sit==='Isento' ? 'badge-isento' : 'badge-pendente';
+    stEl.innerHTML = `<span class="badge ${bc}">${sit}</span>`;
+  }
 }
 
 function renderGradeMeses(idx) {
   const m = MEMBROS[idx];
   return m.meses.map((s,i)=>{
-    const cls=s===1?'mes-pago':s===-1?'mes-isento':'mes-pendente';
-    const ic=s===1?'✓':s===-1?'—':'·';
-    return`<div class="mes-box ${cls}" onclick="toggleMes(${idx},${i})" title="Clique para alternar: Pago → Isento → Pendente">
+    const {cls, ic, title} = classificarMes(s, i);
+    return`<div class="mes-box ${cls}" onclick="toggleMes(${idx},${i})" title="${title} — clique para alternar">
       <div class="mes-icone">${ic}</div><div>${MESES[i]}</div>
     </div>`;
   }).join('');
@@ -391,9 +475,10 @@ function renderMinhaConta(el) {
     </div>
     <div class="card">
       <div class="card-titulo">Mensalidades 2026</div>
-      <div class="meses-grade">${m.meses.map((s,i)=>{const cls=s===1?'mes-pago':s===-1?'mes-isento':'mes-pendente';const ic=s===1?'✓':s===-1?'—':'·';return`<div class="mes-box ${cls}"><div class="mes-icone">${ic}</div><div>${MESES[i]}</div></div>`;}).join('')}</div>
+      <div class="meses-grade">${m.meses.map((s,i)=>{const {cls,ic}=classificarMes(s,i);return`<div class="mes-box ${cls}"><div class="mes-icone">${ic}</div><div>${MESES[i]}</div></div>`;}).join('')}</div>
       <div style="display:flex;gap:16px;margin-top:1rem;font-size:12px;color:var(--branco-sec);">
         <span><span style="color:#5dc48a">✓</span> Pago</span>
+        <span><span style="color:#e07060;font-weight:600">!</span> Vencido</span>
         <span><span style="color:rgba(255,255,255,.2)">·</span> Pendente</span>
         <span><span style="color:var(--azul)">—</span> Isento</span>
       </div>
@@ -440,7 +525,7 @@ function renderMembros(el) {
         </select>
       </div>
     </div>
-    <div class="aviso-admin">Clique em qualquer mês para alternar: Pago (✓) → Isento (—) → Pendente (·)</div>
+    <div class="aviso-admin">Clique em qualquer mês para alternar: Pago (✓) → Isento (—) → Pendente (·) &nbsp;|&nbsp; <span style="color:#e07060">!</span> = vencido (mês anterior não pago)</div>
     <div id="tabela-membros">${tblMembros(MEMBROS)}</div>`;
 }
 
@@ -453,12 +538,13 @@ function tblMembros(lista) {
       return`<tr class="${rowClass(m.status)}">
         <td style="font-weight:500">${m.nome}</td>
         <td><span class="badge badge-perfil">${m.perfil}</span></td>
-        <td>${statusBadge(m.status)}</td>
+        <td id="td-status-${ri}">${statusBadge(m.status)}</td>
         <td style="font-size:12px;color:var(--branco-sec)">${m.inicio?m.inicio.substring(0,7):'—'}</td>
         ${m.meses.map((s,i)=>{
           const cor=s===1?'#5dc48a':s===-1?'var(--azul)':'rgba(255,255,255,.2)';
           const ic=s===1?'✓':s===-1?'—':'·';
-          return`<td style="text-align:center;color:${cor};cursor:pointer" onclick="toggleMes(${ri},${i})" title="${MESES[i]}: clique para alternar">${ic}</td>`;
+          const _c=corCelulaMes(s,i), _i=iconeCelulaMes(s,i);
+          return`<td id="td-mes-${ri}-${i}" style="text-align:center;color:${_c};cursor:pointer;font-size:15px;user-select:none;font-weight:${s===0&&i<MES_ATUAL?'600':'400'}" onclick="toggleMes(${ri},${i})" title="${MESES[i]}: clique para alternar">${_i}</td>`;
         }).join('')}
         <td style="font-weight:500" id="total-membro-${ri}">R$ ${brl(tot)}</td>
         <td><button class="btn-salvar btn-sec" style="margin:0;padding:5px 14px;font-size:12px" onclick="abrirModal(${ri})">Editar</button></td>
@@ -574,6 +660,11 @@ function salvarEdicaoMembro(idx) {
     m.historico.push({data:hoje(),desc:`Status alterado: ${statusAnterior} → ${novoStatus}`});
     aplicarStatusMeses(m);
   }
+  // Envia ao Google Sheets
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'salvarMembro',...m})}).catch(()=>{});
+  }
   document.getElementById('ed-ok').style.display='block';
   setTimeout(()=>{
     fecharModal();
@@ -587,7 +678,12 @@ function salvarEdicaoMembro(idx) {
 
 function removerMembro(idx) {
   if(!confirm(`Remover "${MEMBROS[idx].nome}" permanentemente?`)) return;
+  const nome = MEMBROS[idx].nome;
   MEMBROS.splice(idx,1);
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'removerMembro',nome})}).catch(()=>{});
+  }
   fecharModal();
   renderMembros(document.getElementById('secao-membros'));
 }
@@ -716,6 +812,12 @@ function cadastrarMembro() {
   document.getElementById('cad-senha').value='';
   document.getElementById('cad-fim').value='';
 
+  // Envia ao Google Sheets
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'salvarMembro',...novoMembro})}).catch(()=>{});
+  }
+
   // Feedback visual
   ok.style.display='block';
   err.style.display='none';
@@ -777,7 +879,11 @@ function addCategoria() {
   if(!nome){alert('Digite o nome da categoria.');return;}
   if(CATEGORIAS.find(c=>c.nome.toLowerCase()===nome.toLowerCase())){alert('Já existe.');return;}
   CATEGORIAS.push({nome,tipo});
-  salvarCategorias(); // FIX #6 — persiste
+  salvarCategorias(); // persiste no localStorage
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'salvarCategoria',nome,tipo})}).catch(()=>{});
+  }
   document.getElementById('nova-cat').value='';
   document.getElementById('cat-ok').style.display='block';
   setTimeout(()=>document.getElementById('cat-ok').style.display='none',2000);
@@ -788,7 +894,11 @@ function addCategoria() {
 function removeCategoria(nome,tipo) {
   if(!confirm(`Remover a categoria "${nome}"?`))return;
   CATEGORIAS=CATEGORIAS.filter(c=>!(c.nome===nome&&c.tipo===tipo));
-  salvarCategorias(); // FIX #6 — persiste
+  salvarCategorias(); // persiste no localStorage
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'removerCategoria',nome,tipo})}).catch(()=>{});
+  }
   document.getElementById('cat-entrada').innerHTML=renderPills('Entrada');
   document.getElementById('cat-saida').innerHTML=renderPills('Saída');
 }
@@ -845,6 +955,23 @@ function excluirLancamento(id) {
   if(!l) return;
   if(!confirm(`Excluir o lançamento "${l.evento}" de R$ ${brl(l.valor)} (${l.data})?`)) return;
   LANCAMENTOS=LANCAMENTOS.filter(x=>x.id!==id);
+  // Envia exclusão ao Google Sheets
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'excluirLancamento',id:l.id})}).catch(()=>{});
+  }
+  // Se era mensalidade, verifica se ainda há outro lançamento de mensalidade
+  // desse membro no mesmo mês — se não houver, desmarca o mês
+  if (l.evento.toLowerCase().includes('mensalidade')) {
+    const aindaExiste = LANCAMENTOS.some(x =>
+      x.pago_por === l.pago_por &&
+      x.mes === l.mes &&
+      x.evento.toLowerCase().includes('mensalidade')
+    );
+    if (!aindaExiste) {
+      atualizarMesMembro(l.evento, l.pago_por, l.mes, 0);
+    }
+  }
   // Re-renderiza mantendo os filtros ativos
   filtrarLanc();
 }
@@ -947,6 +1074,34 @@ function atualizarCats() {
     cats.length?cats.map(c=>`<option>${c.nome}</option>`).join(''):`<option disabled>Nenhuma categoria de ${tipo.toLowerCase()} cadastrada</option>`;
 }
 
+// Atualiza o mês do membro baseado no evento — chamado ao salvar/excluir mensalidade
+function atualizarMesMembro(nomeEvento, nomeMembro, mesIdx, valor) {
+  // Só age se o evento for mensalidade (contém a palavra "mensalidade", case-insensitive)
+  if (!nomeEvento.toLowerCase().includes('mensalidade')) return;
+  const m = MEMBROS.find(x => x.nome === nomeMembro);
+  if (!m) return;
+  const i = mesIdx - 1; // mes é 1-based, array é 0-based
+  if (i < 0 || i > 11) return;
+  m.meses[i] = valor; // 1 = pago, 0 = volta a pendente
+  // Atualiza visualmente a célula na tabela de membros se estiver visível
+  const ri = MEMBROS.indexOf(m);
+  const td = document.getElementById(`td-mes-${ri}-${i}`);
+  if (td) {
+    const cor = corCelulaMes(m.meses[i], i);
+    const ic  = iconeCelulaMes(m.meses[i], i);
+    td.style.color      = cor;
+    td.style.fontWeight = (m.meses[i]===0 && i < MES_ATUAL) ? '600' : '400';
+    td.textContent      = ic;
+  }
+  // Atualiza total e status da linha
+  recalcularTotais(ri);
+  // Sincroniza meses com Google Sheets
+  if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'atualizarMeses',nome:m.nome,meses:m.meses})}).catch(()=>{});
+  }
+}
+
 function salvarLancamento() {
   const tipo  =document.getElementById('nl-tipo').value;
   const evento=document.getElementById('nl-evento').value;
@@ -964,14 +1119,19 @@ function salvarLancamento() {
   // FIX #7 — lançamentos têm id único para excluir depois
   LANCAMENTOS.unshift({id:proximoIdLanc++, evento, tipo, pago_por:membro, valor, data:dataFmt, mes});
 
+  // Se for mensalidade, marca o mês do membro como pago automaticamente
+  atualizarMesMembro(evento, membro, mes, 1);
+
   ok.style.display='block';
   err.style.display='none';
   document.getElementById('nl-valor').value='';
   setTimeout(()=>ok.style.display='none',3000);
 
-  // Envia ao Apps Script se configurado
+  // Envia ao Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',body:JSON.stringify({acao:'salvarLancamento',tipo,evento,pago_por:membro,valor,data,mes})}).catch(()=>{});
+    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({acao:'salvarLancamento',tipo,evento,pago_por:membro,valor,data:dataFmt,mes})
+    }).then(r=>r.json()).then(d=>{ if(d.id) LANCAMENTOS[0].id=d.id; }).catch(()=>{});
   }
 }
 </script>
