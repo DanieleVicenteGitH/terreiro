@@ -1157,7 +1157,7 @@ function salvarLancamento() {
 
   // Envia ao Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    enviarGoogle({acao:'salvarLancamento',tipo,evento,pago_por:membro,valor,data:dataFmt,mes}).then(d=>{ if(d&&d.id) LANCAMENTOS[0].id=d.id; });
+    enviarGoogle({acao:'salvarLancamento',tipo,evento,pago_por:membro,valor,data:data,mes}).then(d=>{ if(d&&d.id) LANCAMENTOS[0].id=d.id; }); // data em ISO YYYY-MM-DD
   }
 }
 </script>
