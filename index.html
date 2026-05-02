@@ -276,6 +276,42 @@ function sair() {
 // ═══════════════════════════════════════════
 //  NAVEGAÇÃO
 // ═══════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════
+//  COMUNICAÇÃO COM GOOGLE APPS SCRIPT
+//  Apps Script não aceita Content-Type: application/json via browser
+//  Solução: enviar como text/plain (o Apps Script ainda parseia o JSON)
+// ═══════════════════════════════════════════════════════
+async function enviarGoogle(dados) {
+  if (SCRIPT_URL === 'SUA_URL_DO_APPS_SCRIPT_AQUI') return null;
+  try {
+    const resp = await fetch(SCRIPT_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body:    JSON.stringify(dados),
+    });
+    const txt = await resp.text();
+    try { return JSON.parse(txt); } catch(e) { return null; }
+  } catch(e) {
+    console.warn('Erro ao comunicar com Apps Script:', e.message);
+    return null;
+  }
+}
+
+async function buscarGoogle(acao, params) {
+  if (SCRIPT_URL === 'SUA_URL_DO_APPS_SCRIPT_AQUI') return null;
+  try {
+    let url = SCRIPT_URL + '?acao=' + acao;
+    if (params) Object.keys(params).forEach(k => url += '&' + k + '=' + encodeURIComponent(params[k]));
+    const resp = await fetch(url);
+    const txt  = await resp.text();
+    try { return JSON.parse(txt); } catch(e) { return null; }
+  } catch(e) {
+    console.warn('Erro ao buscar do Apps Script:', e.message);
+    return null;
+  }
+}
+
 async function iniciarApp() {
   document.getElementById('tela-login').style.display='none';
   document.getElementById('app').style.display='block';
@@ -288,8 +324,8 @@ async function iniciarApp() {
       '<div style="width:36px;height:36px;border:3px solid rgba(201,148,42,.3);border-top-color:var(--dourado);border-radius:50%;animation:spin .8s linear infinite"></div>' +
       '<div style="font-family:Cinzel,serif;color:var(--dourado);font-size:13px;letter-spacing:1px">Carregando dados...</div></div>';
     try {
-      const r = await fetch(SCRIPT_URL + '?acao=getTudo');
-      const d = await r.json();
+      const d = await buscarGoogle('getTudo');
+      if (!d) throw new Error('Sem resposta');
       if (d.membros     && d.membros.length)     MEMBROS     = d.membros;
       if (d.lancamentos && d.lancamentos.length)  LANCAMENTOS = d.lancamentos.map((l,i) => ({...l, id: l.id || (proximoIdLanc + i)}));
       if (d.lancamentos) proximoIdLanc = LANCAMENTOS.length + 100;
@@ -409,8 +445,7 @@ function toggleMes(membroIdx, mesIdx) {
 
   // Sincroniza meses com Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'atualizarMeses',nome:m.nome,meses:m.meses})}).catch(()=>{});
+    enviarGoogle({acao:'atualizarMeses',nome:m.nome,meses:m.meses});
   }
   // Atualiza o badge de status na linha
   const stId = `td-status-${membroIdx}`;
@@ -662,8 +697,7 @@ function salvarEdicaoMembro(idx) {
   }
   // Envia ao Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'salvarMembro',...m})}).catch(()=>{});
+    enviarGoogle({acao:'salvarMembro',...m});
   }
   document.getElementById('ed-ok').style.display='block';
   setTimeout(()=>{
@@ -681,8 +715,7 @@ function removerMembro(idx) {
   const nome = MEMBROS[idx].nome;
   MEMBROS.splice(idx,1);
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'removerMembro',nome})}).catch(()=>{});
+    enviarGoogle({acao:'removerMembro',nome});
   }
   fecharModal();
   renderMembros(document.getElementById('secao-membros'));
@@ -814,8 +847,7 @@ function cadastrarMembro() {
 
   // Envia ao Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'salvarMembro',...novoMembro})}).catch(()=>{});
+    enviarGoogle({acao:'salvarMembro',...novoMembro});
   }
 
   // Feedback visual
@@ -881,8 +913,7 @@ function addCategoria() {
   CATEGORIAS.push({nome,tipo});
   salvarCategorias(); // persiste no localStorage
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'salvarCategoria',nome,tipo})}).catch(()=>{});
+    enviarGoogle({acao:'salvarCategoria',nome,tipo});
   }
   document.getElementById('nova-cat').value='';
   document.getElementById('cat-ok').style.display='block';
@@ -896,8 +927,7 @@ function removeCategoria(nome,tipo) {
   CATEGORIAS=CATEGORIAS.filter(c=>!(c.nome===nome&&c.tipo===tipo));
   salvarCategorias(); // persiste no localStorage
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'removerCategoria',nome,tipo})}).catch(()=>{});
+    enviarGoogle({acao:'removerCategoria',nome,tipo});
   }
   document.getElementById('cat-entrada').innerHTML=renderPills('Entrada');
   document.getElementById('cat-saida').innerHTML=renderPills('Saída');
@@ -957,8 +987,7 @@ function excluirLancamento(id) {
   LANCAMENTOS=LANCAMENTOS.filter(x=>x.id!==id);
   // Envia exclusão ao Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'excluirLancamento',id:l.id})}).catch(()=>{});
+    enviarGoogle({acao:'excluirLancamento',id:l.id});
   }
   // Se era mensalidade, verifica se ainda há outro lançamento de mensalidade
   // desse membro no mesmo mês — se não houver, desmarca o mês
@@ -1097,8 +1126,7 @@ function atualizarMesMembro(nomeEvento, nomeMembro, mesIdx, valor) {
   recalcularTotais(ri);
   // Sincroniza meses com Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'atualizarMeses',nome:m.nome,meses:m.meses})}).catch(()=>{});
+    enviarGoogle({acao:'atualizarMeses',nome:m.nome,meses:m.meses});
   }
 }
 
@@ -1129,9 +1157,7 @@ function salvarLancamento() {
 
   // Envia ao Google Sheets
   if(SCRIPT_URL!=='SUA_URL_DO_APPS_SCRIPT_AQUI'){
-    fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({acao:'salvarLancamento',tipo,evento,pago_por:membro,valor,data:dataFmt,mes})
-    }).then(r=>r.json()).then(d=>{ if(d.id) LANCAMENTOS[0].id=d.id; }).catch(()=>{});
+    enviarGoogle({acao:'salvarLancamento',tipo,evento,pago_por:membro,valor,data:dataFmt,mes}).then(d=>{ if(d&&d.id) LANCAMENTOS[0].id=d.id; });
   }
 }
 </script>
