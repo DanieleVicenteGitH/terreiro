@@ -236,8 +236,8 @@ let usuario = null;
 
 // FIX #4 — papel calculado sempre na hora do login, reflete edições feitas na sessão
 function getPapel(nome) {
-  if (nome === 'admin') return 'admin';
-  const m = MEMBROS.find(x => x.nome === nome);
+  if (!nome || nome.trim() === 'admin') return 'admin';
+  const m = MEMBROS.find(x => x.nome.trim() === nome.trim());
   return (m && m.perfil === 'Administrativo') ? 'admin' : 'membro';
 }
 
@@ -254,11 +254,12 @@ function fazerLogin() {
     return;
   }
   // membros
-  const m = MEMBROS.find(x => x.nome === nome && x.senha === senha);
+  // Busca ignorando espaços extras
+  const m = MEMBROS.find(x => x.nome.trim() === nome.trim() && String(x.senha).trim() === senha.trim());
   if (!m) { erro.style.display='block'; return; }
   erro.style.display='none';
-  // FIX #4 — papel atualizado no momento do login
-  usuario = {nome: m.nome, papel: getPapel(m.nome)};
+  // Usa o nome exato do cadastro para evitar inconsistências
+  usuario = {nome: m.nome.trim(), papel: getPapel(m.nome.trim())};
   iniciarApp();
 }
 
@@ -326,7 +327,26 @@ async function iniciarApp() {
     try {
       const d = await buscarGoogle('getTudo');
       if (!d) throw new Error('Sem resposta');
-      if (d.membros     && d.membros.length)     MEMBROS     = d.membros;
+      if (d.membros && d.membros.length) {
+        MEMBROS = d.membros.map(m => ({
+          ...m,
+          nome:       String(m.nome || '').trim(),
+          perfil:     m.perfil  || 'Filho(a) de Santo',
+          status:     m.status  || 'Ativo',
+          senha:      String(m.senha || ''),
+          // meses pode vir como string JSON do Sheets
+          meses:      Array.isArray(m.meses) ? m.meses
+                      : (typeof m.meses === 'string' ? (()=>{try{return JSON.parse(m.meses);}catch(e){return [0,0,0,0,0,0,0,0,0,0,0,0];}})()
+                      : [0,0,0,0,0,0,0,0,0,0,0,0]),
+          historico:  Array.isArray(m.historico) ? m.historico
+                      : (typeof m.historico === 'string' ? (()=>{try{return JSON.parse(m.historico);}catch(e){return [];}})()
+                      : []),
+          // campos financeiros podem não vir do Sheets — padrão 0
+          mensalidade: m.mensalidade || 0,
+          doacao:      m.doacao      || 0,
+          trabalho:    m.trabalho    || 0,
+        }));
+      }
       if (d.lancamentos && d.lancamentos.length)  LANCAMENTOS = d.lancamentos.map((l,i) => ({...l, id: l.id || (proximoIdLanc + i)}));
       if (d.lancamentos) proximoIdLanc = LANCAMENTOS.length + 100;
       if (d.categorias  && d.categorias.length) {
@@ -482,11 +502,23 @@ function recalcularTotais(idx) {
 //  MINHA CONTA
 // ═══════════════════════════════════════════
 function renderMinhaConta(el) {
-  const m=MEMBROS.find(x=>x.nome===usuario.nome);
-  if(!m){el.innerHTML='<p style="color:var(--branco-sec)">Dados não encontrados.</p>';return;}
-  const total=m.mensalidade+m.doacao+m.trabalho;
-  const pagos=m.meses.filter(x=>x===1).length;
-  const ult=m.meses.findLastIndex(x=>x!==0);
+  // Busca com trim para evitar problema de espaço
+  const m = MEMBROS.find(x => x.nome.trim() === usuario.nome.trim())
+         || MEMBROS.find(x => x.nome.trim().toLowerCase() === usuario.nome.trim().toLowerCase());
+  if (!m) {
+    el.innerHTML = `<div class="card" style="text-align:center;padding:2rem">
+      <p style="color:var(--branco-sec);margin-bottom:.5rem">Dados não encontrados para <strong>${usuario.nome}</strong>.</p>
+      <p style="color:var(--branco-sec);font-size:13px">Verifique se o nome no cadastro está exatamente igual ao login.</p>
+    </div>`;
+    return;
+  }
+  // Garante que meses é array válido
+  if (!Array.isArray(m.meses) || m.meses.length !== 12) {
+    m.meses = [0,0,0,0,0,0,0,0,0,0,0,0];
+  }
+  const total = (m.mensalidade||0) + (m.doacao||0) + (m.trabalho||0);
+  const pagos = m.meses.filter(x=>x===1).length;
+  const ult   = m.meses.findLastIndex(x=>x!==0);
   const sit=ult>=0&&m.meses[ult]===1?'Em dia':ult>=0&&m.meses[ult]===-1?'Isento':'Pendente';
   const bc=sit==='Em dia'?'badge-pago':sit==='Isento'?'badge-isento':'badge-pendente';
   let infoStatus='';
