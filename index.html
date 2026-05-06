@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://script.google.com; img-src 'self' data:;">
 <title>Casa de Caboclo Pai Oxalá e Mãe Iansã</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <style>
@@ -131,10 +133,10 @@ hr.sep{border:none;border-top:1px solid var(--borda);margin:1.25rem 0;}
     <div class="login-sub">Gestão de Prestação de Contas</div>
     <label class="campo-label">Seu nome</label>
     <input class="campo-input" id="login-nome" type="text" placeholder="Ex: Ana Lucia"
-      autocomplete="off" spellcheck="false">
+      autocomplete="username" spellcheck="false">
     <label class="campo-label">Senha</label>
     <input class="campo-input" id="login-senha" type="password" placeholder="••••••••"
-      autocomplete="new-password">
+      autocomplete="current-password">
     <button class="btn-login" onclick="fazerLogin()">Entrar</button>
     <div class="login-erro" id="login-erro">Nome ou senha incorretos.</div>
   </div>
@@ -301,11 +303,12 @@ async async function fazerLogin() {
   btn.disabled = true;
   erro.style.display = 'none';
 
-  // Busca membros SEMPRE frescos do Sheets ao fazer login
-  // Garante que senhas alteradas pelo admin reflitam imediatamente
+  // Busca membros frescos do Sheets — com timeout de segurança
   if (SCRIPT_URL !== 'SUA_URL_DO_APPS_SCRIPT_AQUI') {
     try {
-      const d = await buscarGoogle('getMembros');
+      const promise = buscarGoogle('getMembros');
+      const timeout = new Promise(resolve => setTimeout(resolve, 8000)); // max 8s
+      const d = await Promise.race([promise, timeout]);
       if (d && d.membros && d.membros.length) {
         MEMBROS = d.membros.map(m => ({
           ...m,
@@ -341,8 +344,9 @@ async async function fazerLogin() {
   btn.textContent = 'Entrar';
   btn.disabled = false;
 
+  // Valida credenciais
   if (!m) {
-    erro.textContent = 'Nome ou senha incorretos.';
+    erro.textContent = 'Nome ou senha incorretos. Verifique maiúsculas/minúsculas.';
     erro.style.display = 'block';
     return;
   }
