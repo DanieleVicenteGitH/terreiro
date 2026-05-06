@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com https://script.google.com; img-src 'self' data:;">
+
 <title>Casa de Caboclo Pai Oxalá e Mãe Iansã</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <style>
@@ -132,11 +131,9 @@ hr.sep{border:none;border-top:1px solid var(--borda);margin:1.25rem 0;}
     <div class="login-titulo">Casa de Caboclo<br>Pai Oxalá e Mãe Iansã</div>
     <div class="login-sub">Gestão de Prestação de Contas</div>
     <label class="campo-label">Seu nome</label>
-    <input class="campo-input" id="login-nome" type="text" placeholder="Ex: Ana Lucia"
-      autocomplete="username" spellcheck="false">
+    <input class="campo-input" id="login-nome" type="text" placeholder="Ex: Ana Lucia">
     <label class="campo-label">Senha</label>
-    <input class="campo-input" id="login-senha" type="password" placeholder="••••••••"
-      autocomplete="current-password">
+    <input class="campo-input" id="login-senha" type="password" placeholder="••••••••">
     <button class="btn-login" onclick="fazerLogin()">Entrar</button>
     <div class="login-erro" id="login-erro">Nome ou senha incorretos.</div>
   </div>
@@ -290,68 +287,35 @@ async function carregarDadosSheets() {
   carregandoDados  = false;
 }
 
-async async function fazerLogin() {
+function fazerLogin() {
   const nome  = document.getElementById('login-nome').value.trim();
-  const senha = document.getElementById('login-senha').value.trim();
+  const senha = document.getElementById('login-senha').value;
   const erro  = document.getElementById('login-erro');
-  const btn   = document.querySelector('.btn-login');
 
-  if (!nome || !senha) { erro.textContent='Preencha nome e senha.'; erro.style.display='block'; return; }
-
-  // Mostra loading no botão
-  btn.textContent = 'Aguarde...';
-  btn.disabled = true;
   erro.style.display = 'none';
 
-  // Busca membros frescos do Sheets — com timeout de segurança
-  if (SCRIPT_URL !== 'SUA_URL_DO_APPS_SCRIPT_AQUI') {
-    try {
-      const promise = buscarGoogle('getMembros');
-      const timeout = new Promise(resolve => setTimeout(resolve, 8000)); // max 8s
-      const d = await Promise.race([promise, timeout]);
-      if (d && d.membros && d.membros.length) {
-        MEMBROS = d.membros.map(m => ({
-          ...m,
-          nome:      String(m.nome || '').trim(),
-          perfil:    m.perfil  || 'Filho(a) de Santo',
-          status:    m.status  || 'Ativo',
-          senha:     String(m.senha || '').trim(),
-          meses:     Array.isArray(m.meses) ? m.meses
-                     : (typeof m.meses === 'string'
-                       ? (()=>{try{return JSON.parse(m.meses);}catch(e){return [0,0,0,0,0,0,0,0,0,0,0,0];}})()
-                       : [0,0,0,0,0,0,0,0,0,0,0,0]),
-          historico: Array.isArray(m.historico) ? m.historico
-                     : (typeof m.historico === 'string'
-                       ? (()=>{try{return JSON.parse(m.historico);}catch(e){return [];}})()
-                       : []),
-          mensalidade: m.mensalidade || 0,
-          doacao:      m.doacao      || 0,
-          trabalho:    m.trabalho    || 0,
-        }));
-        dadosCarregados = true;
-      }
-    } catch(e) {
-      console.warn('Falha ao buscar membros, usando dados em memória:', e.message);
-    }
+  // Login admin fixo
+  if (nome === 'admin' && senha === 'admin123') {
+    usuario = {nome: 'admin', papel: 'admin'};
+    iniciarApp();
+    return;
   }
 
-  // Busca membro — ignorando espaços e case-insensitive no nome
+  // Busca o membro nos dados carregados da planilha
+  // Nome: case-insensitive com trim | Senha: exata como cadastrada
+  // Nome: ignora espaços e maiúsculas/minúsculas
+  // Senha: comparação EXATA como cadastrada na planilha
   const m = MEMBROS.find(x =>
     x.nome.trim().toLowerCase() === nome.toLowerCase() &&
-    String(x.senha).trim() === senha.trim()
+    String(x.senha) === senha
   );
 
-  btn.textContent = 'Entrar';
-  btn.disabled = false;
-
-  // Valida credenciais
   if (!m) {
-    erro.textContent = 'Nome ou senha incorretos. Verifique maiúsculas/minúsculas.';
+    erro.textContent = 'Nome ou senha incorretos.';
     erro.style.display = 'block';
     return;
   }
 
-  erro.style.display = 'none';
   usuario = {nome: m.nome.trim(), papel: getPapel(m.nome.trim())};
   iniciarApp();
 }
